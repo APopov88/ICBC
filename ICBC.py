@@ -5,14 +5,57 @@ from time import time, sleep
 import smtplib
 from email.message import EmailMessage
 
+access_points = open("access_points.txt").readlines()
+locations = {}
+dates = {}
 credentials = open("gmailcredentials.txt").readlines()
 gmail_user = re.sub("\n", "", credentials[0])
 gmail_password = re.sub("\n", "", credentials[1])
 sent_from = gmail_user
 send_to = re.sub("\n", "", credentials[2])
-appointment_date = ""
-body = str("Appointment available on ") + str(appointment_date)
-dates = []
+appointment_date = {}
+longaddress1 = "https://onlinebusiness.icbc.com/qmaticwebbooking/rest/schedule/branches/"
+longaddress2 = "/dates;servicePublicId=da8488da9b5df26d32ca58c6d6a7973bedd5d98ad052d62b468d3b04b080ea25" \
+               ";customSlotLength=15"
+today = datetime.datetime.today()
+body = ""
+icbc_link = "https://onlinebusiness.icbc.com/qmaticwebbooking/"
+
+def get_locations():
+    for location in access_points:
+        x = re.sub('\n', "", location)
+        y = x.split(":")
+        z = {y[0]:y[1]}
+        locations.update(z)
+
+
+def get_icbc_appoitments():
+    global dates
+    global locations
+    x = locations.keys()
+
+    try:
+        for key in x:
+            dts = []
+            locurl = locations.get(key)
+            url = longaddress1 + locurl + longaddress2
+            webUrl = urllib.request.urlopen(url)
+            resp = str(webUrl.read())
+            resp = re.sub('"', '', resp)
+            resp = re.sub("date:", "", resp)
+            data = re.findall(r'{(.*?)}', resp)
+
+
+            try:
+                for y in data:
+                    y = datetime.datetime.strptime(y, "%Y-%m-%d")
+                    dts.append(y)
+                dates.update({key:min(dts)})
+            except:
+                print("Cannot find the earliest date")
+
+    except:
+        print("Cannot connect to ICBC booking server")
 
 
 def send_mail():
@@ -35,56 +78,39 @@ def send_mail():
         print("something's wrong")
 
 
-url = "https://onlinebusiness.icbc.com/qmaticwebbooking/rest/schedule/branches/" \
-      "d8225a23dd9830e9684fb00f8aea2fff279c892cb1065244aaa0ae05396a0fe2/dates;" \
-      "servicePublicId=da8488da9b5df26d32ca58c6d6a7973bedd5d98ad052d62b468d3b04b080ea25" \
-      ";customSlotLength=15"
-
-
-def get_icbc_appoitments():
-    global dates
-    webUrl = urllib.request.urlopen(url)
-    resp = str(webUrl.read())
-    resp = re.sub('"', '', resp)
-    data = re.findall(r'{(.*?)}', resp)
-
-    dates.clear()
-    for date in data:
-        date = date.split(":")
-        x = {date[0]: date[1]}
-        dates.append(x)
-
-
 def compare_dates():
     global dates
     global apav
     global appointment_date
-    appointment_date = ""
-    for instance in dates:
-        x = instance['date']
-        x = datetime.datetime.strptime(x, "%Y-%m-%d")
+    appointment_date.clear()
+    dts = dates.keys()
+    apav = 0
 
-        if x < y + datetime.timedelta(days=7):
-            appointment_date = x
+    for location in dts:
+        x = dates[location]
+
+        if x < today + datetime.timedelta(days=7):
+            appointment_date.update({location: x})
             apav = 1
-            send_mail()
-            print(datetime.datetime.now(),
-                  x)
-            break
-        else:
-            apav = 0
-
-    # if apav == 0:
-    #     print("No appointments available in the next 7 days")
-    # don't clutter the console
 
 
-y = datetime.datetime.today()
-print("today is ", y)
+def email_appointments():
+    global body
+    if apav == 1:
+        intr = "Appointments available: \n"
+        adk = appointment_date.keys()
+        dts = ""
+        for ad in adk:
+            apd = "in {} on {}. \n"
+            apd = apd.format(ad, datetime.datetime.strftime(appointment_date[ad], "%Y-%m-%d"))
+            dts = dts + apd
 
-apav = 0
+        body = intr + apd + "book here: \n" + icbc_link
+        send_mail()
+
 
 while True:
+    get_locations()
     get_icbc_appoitments()
     compare_dates()
-    sleep(30)
+    email_appointments()
